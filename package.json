@@ -1,0 +1,23 @@
+{
+  "name": "ws-messaging",
+  "version": "1.0.0",
+  "description": "ws-messager",
+  "type": "module",
+  "scripts": {
+    "start": "python3 ./backend/main.py",
+    "dev": "webpack --config webpack.config.js --watch"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@babel/preset-react": "^7.24.7",
+    "dotenv-webpack": "^8.1.0",
+    "webpack-dev-server": "^5.0.4",
+    "write-file-webpack-plugin": "^4.5.1"
+  },
+  "dependencies": {
+    "destam": "^0.3.0",
+    "destam-dom": "^0.8.6",
+    "destamatic-ui": "file:./destamatic-ui"
+  }
+}

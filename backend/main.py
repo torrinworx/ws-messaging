@@ -1,33 +1,111 @@
 import os
 import asyncio
-import websockets
+import traceback
+import subprocess
+import logging.config
+from pathlib import Path
+from threading import Thread
+from urllib.parse import urlparse
+from contextlib import asynccontextmanager
 
-async def connection(websocket, path):
-    async for message in websocket:
-        print(f"Received message: {message}")
-        response_message = f"Echo: {message}"
-        await websocket.send(response_message)
-        print(f"Sent message: {response_message}")
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 
-async def server(port):
-    server_instance = await websockets.serve(connection, 'localhost', port)
-    print(f"Server running on ws://localhost:{port}")
+from ws import router
 
-    await asyncio.gather(server_instance.wait_closed())
 
-    try:
-        await server_instance.wait_closed()
-    except asyncio.CancelledError:
-        print("\nShutting Down...")
-    finally:
-        server_instance.close()
-        await server_instance.wait_closed()
-        print("Shutdown complete.")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    build_dir = Path("./build")
+    logger = logging.getLogger("uvicorn")
+    start_time = asyncio.get_event_loop().time()
+    # Could use some better logic if the build dir is not found or if webpack isn't started:
+    while not build_dir.exists():
+        if asyncio.get_event_loop().time() - start_time > 10:
+            logger.error(
+                "Timeout: Build directory not found after 10 seconds. Terminating process."
+            )
+            raise RuntimeError("Build directory not found.")
+
+        logger.info("Build directory not found. Waiting...")
+        await asyncio.sleep(2)
+
+    app.mount("/", StaticFiles(directory="./build", html=True), name="static")
+    logger.info("Static files mounted successfully.")
+
+    yield
+
+
+app = FastAPI(lifespan=lifespan, redoc_url=False, docs_url=None)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    error_details = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    logger = logging.getLogger("uvicorn")
+    logger.error(f"Validation Error: {error_details}")
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router)
 
 if __name__ == "__main__":
-    port = os.getenv("port", 5000)
+    import uvicorn
 
-    try:
-        asyncio.run(server(port))
-    except KeyboardInterrupt:
-        print("WebSocket server interrupted and will be shut down.")
+    env = os.getenv("ENV")
+    url = os.getenv("URL")
+    parsed_url = urlparse(url)
+
+    if not url:
+        raise EnvironmentError("URL is not set.")
+
+    if not parsed_url.hostname or not parsed_url.port:
+        raise EnvironmentError("Invalid URL.")
+
+    uvicorn_params = {
+        "app": "main:app",
+        "host": parsed_url.hostname,
+        "port": parsed_url.port,
+        "log_level": "info" if env == "development" else "info",
+    }
+
+    if env == "development":
+        uvicorn_params.update({"reload": True, "reload_dirs": ["backend"]})
+
+        # Start the webpack client with color support
+        webpack_process = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--color"],
+            cwd="frontend",  # Adjust this to your actual frontend directory
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        # Capture webpack output
+        def stream_output(process):
+            try:
+                while True:
+                    output = process.stdout.readline()
+                    if output == "" and process.poll() is not None:
+                        break
+                    if output:
+                        print(output.strip())
+            except Exception as e:
+                print(f"Error streaming webpack output: {str(e)}")
+
+        # Stream webpack output in a separate thread
+        thread = Thread(target=stream_output, args=(webpack_process,))
+        thread.start()
+
+    uvicorn.run(**uvicorn_params)
