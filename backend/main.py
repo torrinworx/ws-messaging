@@ -63,8 +63,8 @@ app.include_router(router)
 if __name__ == "__main__":
     import uvicorn
 
-    env = os.getenv("ENV")
-    url = os.getenv("URL")
+    env = os.getenv("ENV", "development")
+    url = os.getenv("URL", "http://localhost:3000")
     parsed_url = urlparse(url)
 
     if not url:
