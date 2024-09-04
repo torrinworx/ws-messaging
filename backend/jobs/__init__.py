@@ -96,13 +96,12 @@ class Jobs:
 
         Args:
             ws: The WebSocket connection instance.
-            data_stream: The raw binary stream iterable generator from the Websocket.
+            data_stream: The raw binary stream iterable generator from the WebSocket.
             job_name: The name of the job from the first 8 bits of the stream.
             params: The params of the job from the stream.
         Returns:
-            TODO:
-            By default, streams the function returned values, and job execution verification,
-            if the funciton doesn't return anything, then it only returns the job execution verification.
+            Streams the function returned values and job execution verification.
+            If the function doesn't return anything, it only returns the job execution verification.
         """
         try:
             job = next((job for job in self.jobs if job.get("name") == job_name), None)
@@ -110,7 +109,7 @@ class Jobs:
                 await ws.send_bytes(
                     json.dumps(
                         {"status": "error", "message": f"Job '{job_name}' not found."}
-                    )
+                    ).encode('utf-8')
                 )
                 return
 
@@ -144,16 +143,22 @@ class Jobs:
             else:
                 result = job_func(**mutable_params)
 
-            await ws.send_bytes(
-                json.dumps(
-                    {"result": result, "status": "success", "message": "Succeeded."}
+            if inspect.isgenerator(result) or inspect.isasyncgen(result):
+                async for item in result:
+                    await ws.send_bytes(
+                        json.dumps({"result": item, "status": "success"}).encode('utf-8')
+                    )
+            else:
+                await ws.send_bytes(
+                    json.dumps(
+                        {"result": result, "status": "success", "message": "Succeeded."}
+                    ).encode('utf-8')
                 )
-            )
         except json.JSONDecodeError:
             await ws.send_bytes(
                 json.dumps(
                     {"status": "error", "message": "Failed to decode the data as JSON."}
-                )
+                ).encode('utf-8')
             )
         except Exception as ex:
             print(traceback.format_exc())
@@ -163,5 +168,5 @@ class Jobs:
                         "status": "error",
                         "message": f"Job '{job_name}' encountered an error: {str(ex)}",
                     }
-                )
+                ).encode('utf-8')
             )
