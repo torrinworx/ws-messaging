@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -7,27 +8,69 @@ from global_vars import jobs
 logger = logging.getLogger("uvicorn")
 router = APIRouter()
 
-
-@router.websocket(path="/websocket")
-async def websocket(ws: WebSocket) -> None:
+async def get_job(websocket: WebSocket):
     """
-    WebSocket endpoint that manages incoming messages and task execution.
-
-    Args:
-        ws (WebSocket): The WebSocket connection instance.
+    Read the first 8 bytes to get job name and subsequent bytes for parameters.
+    
+    Returns the job name, parameters, and remaining bytes in stream.
     """
-    await ws.accept()
+    buffer = bytearray()
+    job_name = None
+    params = {}
+    
+    async for chunk in websocket.iter_bytes():
+        buffer.extend(chunk)
+        if len(buffer) >= 8:
+            job_name_bytes = buffer[:8]
+            job_name = job_name_bytes.decode('utf-8').strip()
+
+            # Assume the remaining buffer contains JSON-encoded parameters
+            remaining_bytes = buffer[8:]
+
+            try:
+                params_end_idx = remaining_bytes.find(b'\n')  # Assume parameters end with a newline for separation
+                if params_end_idx != -1:
+                    params_bytes = remaining_bytes[:params_end_idx].strip()
+                    params = json.loads(params_bytes.decode('utf-8'))
+                    remaining_bytes = remaining_bytes[params_end_idx + 1:]
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Error decoding parameters: {e}")
+            break
+
+    async def remaining_data_stream():
+        if remaining_bytes:
+            yield remaining_bytes
+        
+        async for chunk in websocket.iter_bytes():
+            yield chunk
+
+    return job_name, params, remaining_data_stream
+
+@router.websocket("/websocket")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
     try:
-        msg = await ws.receive_text()
-        await tasks.task_handler(msg=msg, ws=ws)
+        # TODO: Keep the websocket open and going, allow for any number of 
+        # streamed requests in a single open websocket without the need to
+        # reopen it.
+        job_name, params, data_stream = await get_job(websocket)
+        
+        if job_name:
+            await jobs.job_handler(
+                ws=websocket,
+                data_stream=data_stream(),
+                job_name=job_name,
+                params=params
+            )
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected.")
     except Exception as ex:
         logger.error(f"Exception occurred: {ex}")
         try:
-            await ws.send_text(f"Error: {str(ex)}")
+            await websocket.send_text(f"Error: {str(ex)}")
         except WebSocketDisconnect:
             logger.warning("WebSocket closed while sending error message.")
     finally:
-        await ws.close()
+        await websocket.close()
         logger.info("WebSocket connection closed.")
+

@@ -1,11 +1,14 @@
 import os
 import json
+import typing
+import base64
 import inspect
 import asyncio
 import pathlib
 import traceback
 import importlib.util
 from functools import wraps
+
 from fastapi import WebSocket
 
 
@@ -75,71 +78,76 @@ class Jobs:
                 description = fn.__doc__ if fn.__doc__ else ""
                 self.jobs.append(
                     {
-                        "title": job_info.get("title", fn.__name__),
+                        "name": job_info.get("name", fn.__name__),
                         "description": job_info.get("description", description),
                         "function": fn,
                     }
                 )
 
-    async def job_handler(self, msg, ws: WebSocket):
+    async def job_handler(
+            self,
+            ws: WebSocket,
+            data_stream: typing.AsyncGenerator[bytes, None],
+            job_name: str,
+            params: dict
+        ):
         """
-        Handles job execution requests received over a WebSocket connection.
+        Handles job execution requests received from a binary stream.
 
         Args:
-            payload: The data received from the WebSocket client.
             ws: The WebSocket connection instance.
+            data_stream: The raw binary stream iterable generator from the Websocket.
+            job_name: The name of the job from the first 8 bits of the stream.
 
         Returns:
-            Sends the execution result or error message back over the WebSocket connection.
+            By default, streams the function returned values, and job execution verification,
+            if the funciton doesn't return anything, then it only returns the job execution verification.
         """
-
-        payload = json.loads(msg)
-        job_name = payload.get("title")
-        job_item = next(
-            (job for job in self.jobs if job.get("title") == job_name), None
-        )
-
-        if not job_item:
-            await ws.send_text(
-                json.dumps(
-                    {"status": "error", "message": f"Job '{job_name}' not found."}
-                )
-            )
-            return
-
         try:
-            job_func = job_item.get("function")
+            job = next((job for job in self.jobs if job.get("name") == job_name), None)
+
+            if not job:
+                # TODO: Send bytes/standard message format somehow:
+                await ws.send_bytes(json.dumps({
+                    "status": "error",
+                    "message": f"Job '{job_name}' not found."
+                }))
+                return
+
+            job_func = job.get("function")
             params = inspect.signature(job_func).parameters
 
-            context_args = {
-                "payload": payload,
+            context_params = {
+                "data_stream": data_stream,
                 "ws": ws,
             }
-            provided_args = payload.get("args", {})
 
-            # Include context_args if **kwargs is acceptable
-            if any(
-                param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
-            ):
-                provided_args.update(context_args)
-            else:  # Include only specified args
-                for arg_key, arg_val in context_args.items():
+            # Include context_params if **kwargs is acceptable
+            if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+                params.update(context_params)
+            else:  # Include only specified params
+                for arg_key, arg_val in context_params.items():
                     if arg_key in params:
-                        provided_args[arg_key] = arg_val
+                        params[arg_key] = arg_val
 
             if inspect.iscoroutinefunction(job_func):
-                result = await job_func(**provided_args)
+                result = await job_func(**params)
             else:
-                result = job_func(**provided_args)
+                result = job_func(**params)
 
-            await ws.send_text(json.dumps(result))
+            await ws.send_bytes(json.dumps({
+                'result': result,
+                'status': 'success',
+                'message': 'Succeded.'
+            }))
+        except json.JSONDecodeError:
+            await ws.send_bytes(json.dumps({
+                "status": "error",
+                "message": "Failed to decode the data as JSON."
+            }))
         except Exception as ex:
             print(traceback.format_exc())
-            await ws.send_text(
-                json.dumps(
-                    {
-                        "status": "error",
-                        "message": f"Job '{job_name}' encountered an error: {str(ex)}",
-                    }
-                )
-            )
+            await ws.send_bytes(json.dumps({
+                "status": "error",
+                "message": f"Job '{job_name}' encountered an error: {str(ex)}",
+            }))
