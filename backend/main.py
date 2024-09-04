@@ -77,7 +77,7 @@ if __name__ == "__main__":
         "app": "main:app",
         "host": parsed_url.hostname,
         "port": parsed_url.port,
-        "log_level": "info" if env == "development" else "info",
+        "log_level": os.getenv('PYLOG', 'info') if env == "development" else "info",
     }
 
     if env == "development":

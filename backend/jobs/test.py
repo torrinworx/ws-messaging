@@ -1,7 +1,8 @@
 from jobs import job
 
+
 @job(
-    name='test',
+    name="test",
 )
 def main(test, **kwargs):
 

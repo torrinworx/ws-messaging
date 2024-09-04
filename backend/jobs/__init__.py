@@ -85,12 +85,12 @@ class Jobs:
                 )
 
     async def job_handler(
-            self,
-            ws: WebSocket,
-            data_stream: typing.AsyncGenerator[bytes, None],
-            job_name: str,
-            params: dict
-        ):
+        self,
+        ws: WebSocket,
+        data_stream: typing.AsyncGenerator[bytes, None],
+        job_name: str,
+        params: dict,
+    ):
         """
         Handles job execution requests received from a binary stream.
 
@@ -98,56 +98,70 @@ class Jobs:
             ws: The WebSocket connection instance.
             data_stream: The raw binary stream iterable generator from the Websocket.
             job_name: The name of the job from the first 8 bits of the stream.
-
+            params: The params of the job from the stream.
         Returns:
+            TODO:
             By default, streams the function returned values, and job execution verification,
             if the funciton doesn't return anything, then it only returns the job execution verification.
         """
         try:
             job = next((job for job in self.jobs if job.get("name") == job_name), None)
-
             if not job:
-                # TODO: Send bytes/standard message format somehow:
-                await ws.send_bytes(json.dumps({
-                    "status": "error",
-                    "message": f"Job '{job_name}' not found."
-                }))
+                await ws.send_bytes(
+                    json.dumps(
+                        {"status": "error", "message": f"Job '{job_name}' not found."}
+                    )
+                )
                 return
 
             job_func = job.get("function")
-            params = inspect.signature(job_func).parameters
+            sig_params = inspect.signature(job_func).parameters
+
+            mutable_params = {
+                k: v.default
+                for k, v in sig_params.items()
+                if v.default is not inspect.Parameter.empty
+            }
+            mutable_params.update(params)
 
             context_params = {
                 "data_stream": data_stream,
                 "ws": ws,
             }
 
-            # Include context_params if **kwargs is acceptable
-            if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
-                params.update(context_params)
-            else:  # Include only specified params
+            if any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in sig_params.values()
+            ):
+                mutable_params.update(context_params)
+            else:
                 for arg_key, arg_val in context_params.items():
-                    if arg_key in params:
-                        params[arg_key] = arg_val
+                    if arg_key in sig_params:
+                        mutable_params[arg_key] = arg_val
 
             if inspect.iscoroutinefunction(job_func):
-                result = await job_func(**params)
+                result = await job_func(**mutable_params)
             else:
-                result = job_func(**params)
+                result = job_func(**mutable_params)
 
-            await ws.send_bytes(json.dumps({
-                'result': result,
-                'status': 'success',
-                'message': 'Succeded.'
-            }))
+            await ws.send_bytes(
+                json.dumps(
+                    {"result": result, "status": "success", "message": "Succeeded."}
+                )
+            )
         except json.JSONDecodeError:
-            await ws.send_bytes(json.dumps({
-                "status": "error",
-                "message": "Failed to decode the data as JSON."
-            }))
+            await ws.send_bytes(
+                json.dumps(
+                    {"status": "error", "message": "Failed to decode the data as JSON."}
+                )
+            )
         except Exception as ex:
             print(traceback.format_exc())
-            await ws.send_bytes(json.dumps({
-                "status": "error",
-                "message": f"Job '{job_name}' encountered an error: {str(ex)}",
-            }))
+            await ws.send_bytes(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "message": f"Job '{job_name}' encountered an error: {str(ex)}",
+                    }
+                )
+            )
