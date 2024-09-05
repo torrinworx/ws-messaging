@@ -1,68 +1,86 @@
 import { h, Button } from "destamatic-ui";
 import { Observer } from "destam-dom";
 
+let ws;
+
 const callJob = (jobName, params) => {
     return new Promise((resolve, reject) => {
-        const ws = new WebSocket('ws://localhost:3000/websocket');
-        const results = [];
-
-        ws.onopen = () => {
-            console.log('WebSocket connection opened');
+        if (ws && ws.readyState === WebSocket.OPEN) {
             const jobPayload = new TextEncoder().encode(JSON.stringify(params));
             const nameBuffer = new TextEncoder().encode(jobName.padEnd(8, ' '));
             const combinedPayload = new Uint8Array([...nameBuffer, ...jobPayload]);
 
+            console.log('Sending payload for job:', jobName, combinedPayload);
             ws.send(combinedPayload);
-        };
 
-        ws.onmessage = async (event) => {
-            try {
-                // Convert Blob to text
-                const textData = await event.data.text();
-                console.log('Received message:', textData); // Log the received data
-                const data = JSON.parse(textData);
+            const onMessage = async (event) => {
+                try {
+                    const textData = await event.data.text();
+                    console.log('Received message:', textData);
+                    const data = JSON.parse(textData);
 
-                if (data.status === 'success') {
-                    results.push(data.result);
-                } else {
-                    reject(new Error(data.message));
+                    if (data.status === 'success') {
+                        resolve(`Job completed with results: ${data.result}`);
+                    } else {
+                        reject(new Error(data.message));
+                    }
+                } catch (error) {
+                    console.error('Error parsing message:', event.data, error);
+                    reject(new Error('Error parsing server message.'));
                 }
-            } catch (error) {
-                console.error('Error parsing message:', event.data, error);
-                reject(new Error('Error parsing server message.'));
-            }
+                ws.removeEventListener('message', onMessage);
+            };
+
+            const onError = (error) => {
+                console.error('WebSocket error:', error);
+                reject(error);
+                ws.removeEventListener('error', onError);
+            };
+
+            ws.addEventListener('message', onMessage);
+            ws.addEventListener('error', onError);
+
+        } else {
+            console.log('WebSocket connection is not open.');
+            reject(new Error('WebSocket connection is not open.'));
+        }
+    });
+};
+
+const Home = ({ Shared }) => {
+    const message = Observer.mutable('');
+
+    const initWebSocket = () => {
+        ws = new WebSocket('ws://localhost:3000/websocket');
+        ws.onopen = () => {
+            console.log('WebSocket connection opened');
+        };
+        ws.onclose = () => {
+            console.log('WebSocket connection closed');
         };
 
         ws.onerror = (error) => {
             console.error('WebSocket error:', error);
-            reject(error);
         };
+    };
 
-        ws.onclose = () => {
-            console.log('WebSocket connection closed');
-            if (results.length > 0) {
-                const finalResult = `Job completed with results: ${results.join(', ')}`;
-                resolve(finalResult);
-            } else {
-                resolve();
-            }
-        };
-    });
-};
-
-const Home = () => {
-    const message = Observer.mutable('');
+    initWebSocket();
 
     return <div>
-        <Button label='Job 1' onMouseDown={() => callJob('test', { test: 'value1', job_num: '1'})
-            .then(result => message.set(result))
+        <Button label='Job 1' onMouseDown={() => 
+            callJob('test', { test: 'value1', job_num: '1'})
+                .then(result => message.set(result))
+                .catch(error => console.error(error))
         } />
-        <Button label='Job 2' onMouseDown={() => callJob('test', { test: 'value2', job_num: '2' })
-            .then(result => message.set(result))
+        <Button label='Job 2' onMouseDown={() => 
+            callJob('test', { test: 'value2', job_num: '2' })
+                .then(result => message.set(result))
+                .catch(error => console.error(error))
         } />
-        <Button label='Job 3' onMouseDown={() => callJob('test', { test: 'value3', job_num: '3' })
-            .then(result => message.set(result))
-            .catch(error => console.error(error))
+        <Button label='Job 3' onMouseDown={() => 
+            callJob('test', { test: 'value3', job_num: '3' })
+                .then(result => message.set(result))
+                .catch(error => console.error(error))
         } />
         {message.map(m => m ? m : null)}
     </div>;
