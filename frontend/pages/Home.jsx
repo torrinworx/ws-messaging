@@ -10,13 +10,11 @@ const callJob = (jobName, params) => {
             const nameBuffer = new TextEncoder().encode(jobName.padEnd(8, ' '));
             const combinedPayload = new Uint8Array([...nameBuffer, ...jobPayload]);
 
-            console.log('Sending payload for job:', jobName, combinedPayload);
             ws.send(combinedPayload);
 
             const onMessage = async (event) => {
                 try {
                     const textData = await event.data.text();
-                    console.log('Received message:', textData);
                     // TODO: somehow stream the data back through the promise?
                     // idk
                     const data = JSON.parse(textData);
@@ -69,6 +67,7 @@ const Home = ({ Shared }) => {
     initWebSocket();
 
     return <div>
+        Hi there
         <Button label='Job 1' onMouseDown={() => 
             callJob('test', { test: 'value1', job_num: '1'})
                 .then(result => message.set(result))
@@ -81,6 +80,11 @@ const Home = ({ Shared }) => {
         } />
         <Button label='Job 3' onMouseDown={() => 
             callJob('test', { test: 'value3', job_num: '3' })
+                .then(result => message.set(result))
+                .catch(error => console.error(error))
+        } />
+        <Button label='Hello World' onMouseDown={() => 
+            callJob('HelloW', {})
                 .then(result => message.set(result))
                 .catch(error => console.error(error))
         } />
