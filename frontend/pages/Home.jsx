@@ -17,10 +17,12 @@ const callJob = (jobName, params) => {
                 try {
                     const textData = await event.data.text();
                     console.log('Received message:', textData);
+                    // TODO: somehow stream the data back through the promise?
+                    // idk
                     const data = JSON.parse(textData);
 
                     if (data.status === 'success') {
-                        resolve(`Job completed with results: ${data.result}`);
+                        resolve(data.result);
                     } else {
                         reject(new Error(data.message));
                     }
@@ -41,11 +43,11 @@ const callJob = (jobName, params) => {
             ws.addEventListener('error', onError);
 
         } else {
-            console.log('WebSocket connection is not open.');
             reject(new Error('WebSocket connection is not open.'));
         }
     });
 };
+
 
 const Home = ({ Shared }) => {
     const message = Observer.mutable('');

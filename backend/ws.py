@@ -46,13 +46,6 @@ async def get_job(websocket: WebSocket):
 @router.websocket("/websocket")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    logger.info("WebSocket connection accepted.")
-
-    async def stream_remaining_data(remaining_data):
-        if remaining_data:
-            yield remaining_data
-        async for chunk in websocket.iter_bytes():
-            yield chunk
 
     try:
         while True:
@@ -60,12 +53,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.warning("WebSocket disconnected unexpectedly.")
                 break
 
-            job_name, params, remaining_data = await get_job(websocket)
+            job_name, params, data_stream = await get_job(websocket)
             if not job_name:
-                continue  # Continue listening for next messages if no job is received
+                continue
 
             if job_name:
-                data_stream = stream_remaining_data(remaining_data)
                 await jobs.job_handler(ws=websocket, data_stream=data_stream, job_name=job_name, params=params)
     
     except WebSocketDisconnect:
